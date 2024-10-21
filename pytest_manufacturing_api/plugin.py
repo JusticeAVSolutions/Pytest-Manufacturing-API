@@ -23,37 +23,6 @@ def pytest_addoption(parser):
         default=False,
         help="Utilize manufacturing API for serial numbering and logging test results"
     )
-    
-    # Create a temporary file for the JSON report
-    temp_json = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-    temp_json_path = temp_json.name
-    temp_json.close()  # Close the file so pytest-json-report can write to it
-
-    # Add pytest-json-report options
-    parser.addini("json_report", "Enable JSON report generation", type="bool", default=True)
-    parser.addini("json_report_file", "Path to JSON report file", type="str", default=temp_json_path)
-
-    parser.addoption(
-        "--json-report", action="store_true", help="Generate a JSON report."
-    )
-    parser.addoption(
-        "--json-report-file",
-        action="store",
-        default=temp_json_path,
-        help=f"Path to JSON report file. Defaults to a temporary file: {temp_json_path}",
-    )
-
-@pytest.fixture(scope="session", autouse=True)
-def enforce_json_report(pytestconfig):
-    """
-    Enforce the usage of pytest-json-report by setting the necessary options.
-    """
-    # Check if --json-report is already specified
-    if not pytestconfig.getoption("--json-report"):
-        # Inject --json-report and --json-report-file options
-        pytestconfig.option.json_report = True
-        # Use the defined json_report_file
-        pytestconfig.option.json_report_file = pytestconfig.getini("json_report_file")
 
 @pytest.fixture(scope='session')
 def unit_id(request):
@@ -61,29 +30,37 @@ def unit_id(request):
     request.config.unit_id = None
     return request.config
 
+def pytest_configure(config):
+    config.option.json_report = True
+    # Create a temporary file for the JSON report
+    temp_json = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+    temp_json_path = temp_json.name
+    temp_json.close()  # Close the file so pytest-json-report can write to it
+    config.option.json_report_file = temp_json_path
+
 def pytest_sessionfinish(session, exitstatus):
     """
     After the test session finishes, upload JSON test results, and delete the temp file.
     """
 
-    unit_id = session.config.unit_id
+    unit_id = getattr(session, 'unit_id', None)
     if unit_id:
-        # Do something with the unit_id at the end of the session
         print(f"Unit ID: {unit_id}")
     else:
-        print("No unit ID was set.")
-        
-    json_report_file = session.config.getoption("--json-report-file")
-    
+        print("No unit ID was set. No test results were logged")
+        return #TODO
+
+    # Retrieve the json_report_file option
+    json_report_file = session.config.option.json_report_file
+
     if not json_report_file or not os.path.exists(json_report_file):
         print("JSON report file not found. Skipping upload.")
         return
     
     try:
-        with open(json_report_file, 'r') as f:
+        with open(json_report_file, 'r', encoding='utf-8-sig') as f:
             report_data = json.load(f)
         
-            
         # Define the upload URL
         api_url = session.config.getoption("--manufacturing-api-url").rstrip('/')
         upload_url = f"{api_url}/units/{unit_id}/test_results/add_json"
@@ -112,7 +89,7 @@ def pytest_sessionfinish(session, exitstatus):
             print(f"Failed to delete temporary JSON report file: {e}")
     
 @pytest.fixture(scope='session')
-def api_client(request):
+def manufacturing_api_client(request):
     """Provides an API client for interacting with the REST API."""
     use_api = request.config.getoption("--use-manufacturing-api")
     api_url = request.config.getoption("--manufacturing-api-url")
@@ -124,65 +101,56 @@ def api_client(request):
         def __init__(self, base_url):
             self.base_url = base_url.rstrip('/')  # Ensure no trailing slash
             self.session = requests.Session()
-
-        def create_product(self, name, uses_serial=False, uses_mac=False, serial_number_prefix=None):
-            url = f'{self.base_url}/products/create'
-            data = {
-                'name': name,
-                'uses_serial': str(uses_serial).lower(),
-                'uses_mac': str(uses_mac).lower(),
-                'serial_number_prefix': serial_number_prefix
-            }
-            response = self.session.post(url, json=data)
-            response.raise_for_status()
-            return response.json()
-
-        def create_serial_number(self, product_id, serial_number):
-            url = f'{self.base_url}/serial_numbers/create'
-            data = {
-                'product_id': product_id,
-                'serial_number': serial_number
-            }
-            response = self.session.post(url, json=data)
-            response.raise_for_status()
-            return response.json()
-
-        def create_mac_address(self, product_id, mac_address):
-            url = f'{self.base_url}/mac_addresses/create'
-            data = {
-                'product_id': product_id,
-                'mac_address': mac_address
-            }
-            response = self.session.post(url, json=data)
-            response.raise_for_status()
-            return response.json()
-
+        
         def create_unit(self, product_id, serial_number_id=None, mac_address_id=None):
-            url = f'{self.base_url}/units/create'
+            url = f'{self.base_url}/units/create_api'
             data = {'product_id': product_id}
             if serial_number_id is not None:
-                data['serial_number_id'] = serial_number_id
+                data['serial_number'] = serial_number_id
             if mac_address_id is not None:
-                data['mac_address_id'] = mac_address_id
+                data['mac_address'] = mac_address_id
             response = self.session.post(url, json=data)
             response.raise_for_status()
-            return response.json()
+            unit = response.json()
+            unit_id = unit["id"]
+            return unit_id
 
-        def log_test_result(self, unit_id, test_result, details):
-            url = f'{self.base_url}/units/{unit_id}/test_results/add_json'
-            data = {
-                "test_result": test_result,
-                "details": details
-            }
-            response = self.session.post(url, json=data)
-            response.raise_for_status()
-            return response.json()
-
-        def get_unit(self, unit_id):
-            url = f'{self.base_url}/units/{unit_id}/json'
+        def get_products(self, name):
+            url = f'{self.base_url}/products/json'
             response = self.session.get(url)
             response.raise_for_status()
             return response.json()
+        
+        def get_next_serial(self, product_id):
+            unit_id = None
+            serial_number_str = None
+            url = f"{self.base_url}/units/next_serial"
+            create_unit_response = self.session.post(url, params={"product_id": product_id})
+            create_unit_response.raise_for_status()
+            
+            unit = create_unit_response.json()
+            unit_id = unit["id"]
+            serial_number_str = unit["serial_number"]["serial_number"]
+            
+            print(f"Created new unit with Serial Number: {serial_number_str}, Unit ID: {unit_id}")
+
+            return unit_id, serial_number_str
+        
+        def get_unit_by_serial(self, serial_number):
+            unit_id = None
+
+            url = f"{self.base_url}/units/by_serial/{serial_number}"
+            get_unit_response = self.session.get(url)
+            # get_unit_response.raise_for_status()
+
+            if get_unit_response.status_code == 200:
+                unit = get_unit_response.json()
+                unit_id = unit["id"]
+                print(f"Serial number {serial_number} exists. Unit ID: {unit_id}")
+            else:
+                print(f"Serial number does not exists.")
+            
+            return unit_id
 
         # Add more methods as needed for other endpoints
 
