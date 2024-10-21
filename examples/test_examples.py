@@ -4,7 +4,7 @@ run tests with -s --use-manufacturing-api --manufacturing-api-url http://localho
 import pytest
 
 def test_get_product_id_by_name(manufacturing_api_client):
-    name = "Boundary Mic"
+    name = "AXIO Boundary Mic"
     id = None
 
     products = manufacturing_api_client.get_products(name)

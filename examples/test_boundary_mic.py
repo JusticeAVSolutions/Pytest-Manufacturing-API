@@ -8,7 +8,7 @@ MIC_DEFAULT_SN = "0000000000000000"
 # Use pytest built-in 'request' fixture so that unit_id can be tracked for result logging
 # Use pytest built-in 'record_property' fixture to log SN
 def test_get_or_make_unit(request, record_property, manufacturing_api_client):
-    product_name = "Boundary Mic"
+    product_name = "AXIO Boundary Mic"
     product_id = None
     unit_id = None
     serial_number_str = None
