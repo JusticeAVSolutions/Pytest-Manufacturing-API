@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='pytest-manufacturing-api',
-    version='0.1.0',
+    version='0.1.1',
     author='Mark Mayhew',
     author_email='mark.mayhew@javs.com',
     description='A pytest plugin to connect to manufacturing database api.',

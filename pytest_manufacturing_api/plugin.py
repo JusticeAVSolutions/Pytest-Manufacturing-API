@@ -1,11 +1,11 @@
-# conftest.py
-
 import os
 import tempfile
 import pytest
 import requests
 import re
 import json
+
+__pytest_sequencer_plugin__ = True
 
 # Global list to map test nodeids to unit_ids
 test_unit_mapping = {}
@@ -31,12 +31,19 @@ def unit_id(request):
     return request.config
 
 def pytest_configure(config):
-    config.option.json_report = True
-    # Create a temporary file for the JSON report
-    temp_json = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-    temp_json_path = temp_json.name
-    temp_json.close()  # Close the file so pytest-json-report can write to it
-    config.option.json_report_file = temp_json_path
+    if not getattr(config.option, 'json_report', False):
+        config.option.json_report = True
+
+    if not getattr(config.option, 'json_report_file', None):
+        # Create a temporary file for the JSON report
+        temp_json = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+        temp_json_path = temp_json.name
+        temp_json.close()  # Close the file so pytest-json-report can write to it
+        config.option.json_report_file = temp_json_path
+        # Indicate that we created this temp file
+        config.option.created_temp_json_report_file = True
+    else:
+        config.option.created_temp_json_report_file = False
 
 def pytest_sessionfinish(session, exitstatus):
     """
@@ -81,12 +88,15 @@ def pytest_sessionfinish(session, exitstatus):
         print(f"An error occurred while processing the JSON report: {e}")
     
     finally:
-        # Delete the temporary JSON report file
-        try:
-            os.remove(json_report_file)
-            print("Temporary JSON report file deleted.")
-        except Exception as e:
-            print(f"Failed to delete temporary JSON report file: {e}")
+        # Only delete the temporary JSON report file if we created it
+        if getattr(session.config.option, 'created_temp_json_report_file', False):
+            try:
+                os.remove(json_report_file)
+                print("Temporary JSON report file deleted.")
+            except Exception as e:
+                print(f"Failed to delete temporary JSON report file: {e}")
+        else:
+            print("Did not delete JSON report file since it was not created by this plugin.")
     
 @pytest.fixture(scope='session')
 def manufacturing_api_client(request):
