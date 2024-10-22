@@ -49,9 +49,10 @@ def pytest_sessionstart(session):
     session.plugin_errors = []
 
 def pytest_sessionfinish(session, exitstatus):
-    """
-    After the test session finishes, upload JSON test results, and delete the temp file.
-    """
+    use_api = session.config.getoption("--use-manufacturing-api")
+    if use_api == False or use_api == None:
+        return
+    
     unit_id = getattr(session, 'unit_id', None)
     if unit_id:
         print(f"Unit ID: {unit_id}")
