@@ -2,7 +2,6 @@ import os
 import tempfile
 import pytest
 import requests
-import re
 import json
 
 __pytest_sequencer_plugin__ = True
@@ -45,33 +44,51 @@ def pytest_configure(config):
     else:
         config.option.created_temp_json_report_file = False
 
+def pytest_sessionstart(session):
+    # Initialize a list to store plugin errors
+    session.plugin_errors = []
+
 def pytest_sessionfinish(session, exitstatus):
     """
     After the test session finishes, upload JSON test results, and delete the temp file.
     """
-
     unit_id = getattr(session, 'unit_id', None)
     if unit_id:
         print(f"Unit ID: {unit_id}")
     else:
-        print("No unit ID was set. No test results were logged")
-        return #TODO
+        error_message = "No unit ID was set. No test results were logged."
+        print(f"[PLUGIN_ERROR] {__name__}: {error_message}")
+        # Optionally, append to session.plugin_errors if needed for internal use
+        session.plugin_errors.append({
+            'plugin': __name__,
+            'error': error_message
+        })
+        # Continue to attempt to upload or handle as per your logic
 
     # Retrieve the json_report_file option
     json_report_file = session.config.option.json_report_file
 
     if not json_report_file or not os.path.exists(json_report_file):
-        print("JSON report file not found. Skipping upload.")
-        return
-    
+        error_message = "JSON report file not found. Skipping upload."
+        print(f"[PLUGIN_ERROR] {__name__}: {error_message}")
+        session.plugin_errors.append({
+            'plugin': __name__,
+            'error': error_message
+        })
+        return  # Exit early as there's no report to upload
+
     try:
         with open(json_report_file, 'r', encoding='utf-8-sig') as f:
             report_data = json.load(f)
-        
+
+        # Add plugin errors to the report data if any
+        if hasattr(session, 'plugin_errors') and session.plugin_errors:
+            report_data['plugin_errors'] = session.plugin_errors
+
         # Define the upload URL
         api_url = session.config.getoption("--manufacturing-api-url").rstrip('/')
         upload_url = f"{api_url}/units/{unit_id}/test_results/add_json"
-            
+
         # Upload the test result
         response = requests.post(
             upload_url,
@@ -81,12 +98,28 @@ def pytest_sessionfinish(session, exitstatus):
         if response.status_code == 200:
             print(f"Logged test_result for Unit ID {unit_id}.")
         else:
-            print(f"Failed to upload JSON report for Unit ID {unit_id}. Status Code: {response.status_code}")
-            print(f"Response: {response.text}")
-    
+            error_message = f"Failed to upload JSON report for Unit ID {unit_id}. Status Code: {response.status_code}"
+            print(f"[PLUGIN_ERROR] {__name__}: {error_message}")
+            # Optionally, include a brief description from the response
+            response_text = response.text.strip()
+            if response_text:
+                error_message += f" Response: {response_text}"
+                print(f"[PLUGIN_ERROR] {__name__}: {error_message}")
+            # Append to plugin_errors without traceback
+            session.plugin_errors.append({
+                'plugin': __name__,
+                'error': error_message
+            })
+
     except Exception as e:
-        print(f"An error occurred while processing the JSON report: {e}")
-    
+        error_message = f"An error occurred while processing the JSON report: {e}"
+        print(f"[PLUGIN_ERROR] {__name__}: {error_message}")
+        # Append the error without traceback
+        session.plugin_errors.append({
+            'plugin': __name__,
+            'error': error_message
+        })
+
     finally:
         # Only delete the temporary JSON report file if we created it
         if getattr(session.config.option, 'created_temp_json_report_file', False):
@@ -94,9 +127,16 @@ def pytest_sessionfinish(session, exitstatus):
                 os.remove(json_report_file)
                 print("Temporary JSON report file deleted.")
             except Exception as e:
-                print(f"Failed to delete temporary JSON report file: {e}")
+                error_message = f"Failed to delete temporary JSON report file: {e}"
+                print(f"[PLUGIN_ERROR] {__name__}: {error_message}")
+                # Append the error without traceback
+                session.plugin_errors.append({
+                    'plugin': __name__,
+                    'error': error_message
+                })
         else:
             print("Did not delete JSON report file since it was not created by this plugin.")
+
     
 @pytest.fixture(scope='session')
 def manufacturing_api_client(request):
